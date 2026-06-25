@@ -1,0 +1,6 @@
+{
+  "name": "AutoAgent",
+  "description": "An autonomous, system-level Android mobile agent capable of perceiving UI states and executing actions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

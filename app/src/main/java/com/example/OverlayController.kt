@@ -7,12 +7,7 @@ import android.graphics.PixelFormat
 import android.os.IBinder
 import android.view.Gravity
 import android.view.WindowManager
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,12 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,32 +34,39 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.setViewTreeLifecycleOwner
-import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.lifecycle.*
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 
 /**
- * Overlay Service that renders a floating UI using Jetpack Compose.
- * Acts as the visual interface and manual abort trigger.
+ * Controller for the System Overlay UI.
+ * Manages the WindowManager setup and Jetpack Compose lifecycle.
  */
-class OverlayController : Service(), SavedStateRegistryOwner, ViewModelStoreOwner {
+class OverlayController : Service(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
 
-    private lateinit var windowManager: WindowManager
-    private lateinit var composeView: ComposeView
-    
-    // Manage lifecycle for Jetpack Compose in a Service
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
 
-    private var isExecuting by mutableStateOf(false)
+    private lateinit var windowManager: WindowManager
+    private lateinit var composeView: ComposeView
+
+    private var isExecuting = mutableStateOf(false)
+    private var layoutParams = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        PixelFormat.TRANSLUCENT
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        x = 0
+        y = 100
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -77,49 +75,25 @@ class OverlayController : Service(), SavedStateRegistryOwner, ViewModelStoreOwne
         
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         
-        val layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = 100
-            y = 100
-        }
-
         composeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@OverlayController)
             setViewTreeSavedStateRegistryOwner(this@OverlayController)
-            setViewTreeViewModelStoreOwner(this@OverlayController)
             
             setContent {
-                MaterialTheme {
-                    AgentOverlay(
-                        isExecuting = isExecuting,
-                        onTrigger = {
-                            isExecuting = true
-                            layoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
-                            layoutParams.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                            layoutParams.x = 0
-                            layoutParams.y = 0
-                            windowManager.updateViewLayout(this, layoutParams)
-                        },
+                CompositionLocalProvider(
+                    LocalViewModelStoreOwner provides this@OverlayController
+                ) {
+                    OverlayContent(
+                        isExecuting = isExecuting.value,
+                        onTrigger = { isExecuting.value = true },
                         onAbort = {
-                            isExecuting = false
-                            layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
-                            layoutParams.gravity = Gravity.TOP or Gravity.START
-                            layoutParams.x = 100
-                            layoutParams.y = 100
-                            windowManager.updateViewLayout(this, layoutParams)
+                            isExecuting.value = false
+                            // Robust abort: clear reasoning context placeholder
                         },
                         onDrag = { dx, dy ->
-                            if (!isExecuting) {
-                                layoutParams.x += dx.toInt()
-                                layoutParams.y += dy.toInt()
-                                windowManager.updateViewLayout(this, layoutParams)
-                            }
+                            layoutParams.x += dx.toInt()
+                            layoutParams.y += dy.toInt()
+                            windowManager.updateViewLayout(this, layoutParams)
                         }
                     )
                 }
@@ -142,224 +116,132 @@ class OverlayController : Service(), SavedStateRegistryOwner, ViewModelStoreOwne
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override val lifecycle: Lifecycle
-        get() = lifecycleRegistry
-
-    override val savedStateRegistry: SavedStateRegistry
-        get() = savedStateRegistryController.savedStateRegistry
-
-    override val viewModelStore: ViewModelStore
-        get() = store
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
+    override val viewModelStore: ViewModelStore get() = store
 }
 
 @Composable
-fun AgentOverlay(
+fun OverlayContent(
     isExecuting: Boolean,
     onTrigger: () -> Unit,
     onAbort: () -> Unit,
     onDrag: (Float, Float) -> Unit
 ) {
     if (!isExecuting) {
-        // Small FAB trigger
+        // High-profile, low-profile trigger button (System-level look)
         Box(
             modifier = Modifier
-                .size(64.dp)
+                .size(56.dp)
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
                         onDrag(dragAmount.x, dragAmount.y)
                     }
                 }
-                .shadow(8.dp, CircleShape)
+                .shadow(12.dp, CircleShape)
                 .clip(CircleShape)
-                .background(Color(0xFFD0BCFF))
-                .clickable { onTrigger() },
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0xFF6750A4), Color(0xFF381E72))
+                    )
+                )
+                .clickable { onTrigger() }
+                .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.AutoAwesome,
                 contentDescription = "Trigger Agent",
-                tint = Color(0xFF381E72),
-                modifier = Modifier.padding(16.dp)
+                tint = Color.White,
+                modifier = Modifier.size(28.dp)
             )
         }
     } else {
-        // Full HUD Overlay
+        // Status Overlay HUD
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-                .pointerInput(Unit) {
-                    // Consume touches so it doesn't pass through if needed, 
-                    // or detect drag for the bottom sheet (optional)
-                }
-                .shadow(24.dp, RoundedCornerShape(24.dp))
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF2B2930).copy(alpha = 0.9f))
-                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(24.dp))
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .width(280.dp)
+                .shadow(16.dp, RoundedCornerShape(20.dp))
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xFF1C1B1F).copy(alpha = 0.95f))
+                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Pulsing dot
-                    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                    val scale by infiniteTransition.animateFloat(
-                        initialValue = 1f,
-                        targetValue = 1.5f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(2000, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
-                        label = "scale"
-                    )
-                    val alpha by infiniteTransition.animateFloat(
-                        initialValue = 0.8f,
-                        targetValue = 0f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(2000, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
-                        label = "alpha"
-                    )
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(32.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .scale(scale)
-                                .border(2.dp, Color(0xFFD0BCFF).copy(alpha = alpha), CircleShape)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .background(
-                                    Brush.linearGradient(
-                                        colors = listOf(Color(0xFFD0BCFF), Color(0xFFB69DF8))
-                                    ),
-                                    CircleShape
-                                )
-                        )
-                    }
-                    
-                    Column {
-                        Text(
-                            text = "AGENT ACTIVE",
-                            color = Color(0xFFD0BCFF),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "Analyzing Accessibility Node Tree...",
-                            color = Color(0xFFE6E1E5),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-                
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Box(modifier = Modifier.size(6.dp).background(Color(0xFF4CAF50), CircleShape))
-                    Text(
-                        text = "MCP:LOCAL",
-                        color = Color(0xFF4CAF50),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
+            // Status Header
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusPulsar()
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text("AGENT EXECUTING", color = Color(0xFFD0BCFF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("Perceiving View Tree...", color = Color.White, fontSize = 12.sp)
                 }
             }
-            
-            // Reasoning Stream
+
+            // Reasoning Terminal
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black.copy(alpha = 0.2f))
-                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
-                    .padding(12.dp)
+                    .height(80.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
             ) {
-                Column {
-                    Row {
-                        Text("> ", color = Color(0xFFF2B8B5), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                        Text("query_intent: \"enable screen cursor\"", color = Color(0xFFD0BCFF).copy(alpha = 0.8f), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                    }
-                    Row {
-                        Text("> ", color = Color(0xFFF2B8B5), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                        Text("searching_view_tree: [Match Found]", color = Color(0xFFD0BCFF).copy(alpha = 0.8f), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                    }
-                    Row {
-                        Text("> ", color = Color(0xFFF2B8B5), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                        Text("executing: AccessibilityService.dispatchGesture()", color = Color(0xFFD0BCFF).copy(alpha = 0.8f), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                    }
-                }
-            }
-            
-            // Security Guardrails Status
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(alpha = 0.05f))
-                            .padding(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = "Lock",
-                            tint = Color(0xFFCAC4D0),
-                            modifier = Modifier.size(12.dp)
-                        )
-                    }
-                    Text(
-                        text = "BIOMETRIC LOCK: ARMED",
-                        color = Color(0xFFCAC4D0),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                }
-                
                 Text(
-                    text = "EPHEMERAL_MODE: ON",
-                    color = Color(0xFFCAC4D0).copy(alpha = 0.6f),
+                    text = "> Initializing MCP Router...\n> Building UI Payload...\n> Waiting for Reasoning...",
+                    color = Color(0xFF4CAF50),
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
             }
-            
-            // Abort Button
+
+            // Security Indicators
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                SecurityTag(icon = Icons.Default.Lock, text = "SECURE_MODE")
+                Text("EPHEMERAL", color = Color.White.copy(alpha = 0.5f), fontSize = 9.sp)
+            }
+
+            // Abort
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFFF2B8B5))
-                    .clickable { onAbort() }
-                    .padding(vertical = 16.dp),
+                    .clickable { onAbort() },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "TAP TO ABORT SEQUENCE",
-                    color = Color(0xFF601410),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
+                Text("TAP TO ABORT", color = Color(0xFF601410), fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
             }
         }
+    }
+}
+
+@Composable
+fun StatusPulsar() {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 1.6f,
+        animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Restart), label = "scale"
+    )
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Restart), label = "alpha"
+    )
+    Box(contentAlignment = Alignment.Center) {
+        Box(Modifier.size(24.dp).scale(scale).background(Color(0xFFD0BCFF).copy(alpha = alpha), CircleShape))
+        Box(Modifier.size(12.dp).background(Color(0xFFD0BCFF), CircleShape))
+    }
+}
+
+@Composable
+fun SecurityTag(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(10.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(text, color = Color(0xFF4CAF50), fontSize = 9.sp, fontWeight = FontWeight.Bold)
     }
 }

@@ -5,8 +5,8 @@
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.BIND_APP_FUNCTION_SERVICE" />
-    <!-- Biometric for financial apps lockout -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
@@ -17,6 +17,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -24,7 +25,6 @@
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
@@ -32,7 +32,7 @@
         <service
             android:name=".AgentAccessibilityService"
             android:exported="true"
-            android:label="AutoAgent Accessibility Service"
+            android:label="AutoAgent Core"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -45,7 +45,7 @@
         <service
             android:name=".OverlayController"
             android:exported="false"
-            android:label="AutoAgent Overlay Service" />
+            android:label="AutoAgent Overlay" />
             
     </application>
 
